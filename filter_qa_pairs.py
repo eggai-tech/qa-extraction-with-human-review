@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 import yaml
@@ -45,19 +46,19 @@ def main():
     parser.add_argument(
         "--answer_relevancy_threshold",
         type=float,
-        default=0.8,
+        default=0.7,
         help="Minimum answer relevance score to keep a QA pair",
     )
     parser.add_argument(
         "--context_precision_threshold",
         type=float,
-        default=0.8,
+        default=0.65,
         help="Minimum context precision score to keep a QA pair",
     )
     parser.add_argument(
         "--context_recall_threshold",
         type=float,
-        default=0.8,
+        default=0.9,
         help="Minimum context recall score to keep a QA pair",
     )
     args = parser.parse_args()
@@ -67,6 +68,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     rejected_dir.mkdir(parents=True, exist_ok=True)
 
+    start = time.perf_counter()
     for input_file in input_dir.glob("*.json"):
         print(f"Processing {input_file.name}...")
         with open(input_file, 'r', encoding='utf-8') as f:
@@ -76,6 +78,7 @@ def main():
         rejected_pairs = []
         # save contexts for context precision computation
         contexts = [qa_pair["reference"]["chunk_text"] for qa_pair in qa_pairs]
+        qa_pairs_with_metrics = []
         for qa_pair in qa_pairs:
             question = qa_pair["question"]
             answer = qa_pair["answer"]
@@ -97,6 +100,7 @@ def main():
             metrics["context_precision"] = score["context_precision"][0]
             # save metrics
             qa_pair["metrics"] = metrics
+            qa_pairs_with_metrics.append(qa_pair)
 
             if (metrics["faithfulness"] >= args.faithfulness_threshold and
                 metrics["answer_relevancy"] >= args.answer_relevancy_threshold and
@@ -108,6 +112,9 @@ def main():
                 print(f"Rejected pair: {qa_pair['question']} -> {qa_pair['answer']}")
                 rejected_pairs.append(qa_pair)
 
+        # resave the qa_pairs with metrics
+        with open(input_file, 'w', encoding='utf-8') as f:
+            json.dump(qa_pairs_with_metrics, f, indent=2, ensure_ascii=False)
 
         output_file = output_dir / input_file.name
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -118,6 +125,9 @@ def main():
             json.dump(rejected_pairs, f, indent=2, ensure_ascii=False)
 
         print(f"Filtered pairs saved to {output_file}")
+
+    stop = time.perf_counter()
+    print(f"Filtering completed in {stop - start:.2f} seconds.")
 
 
 if __name__ == "__main__":
