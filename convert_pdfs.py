@@ -27,6 +27,7 @@ def main():
     # convert each PDF file in the input using docling
     for pdf_file in input_dir.glob("*.pdf"):
         print(f"Converting {pdf_file.name} to markdown...")
+        # convert PDF to markdown using docling
         result = DocumentConverter().convert(source=str(pdf_file))
         markdown = result.document.export_to_markdown()
 
