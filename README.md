@@ -1,10 +1,10 @@
-# QA Generator with Human Review
+# QA Extraction with Human Review
 
-Generate QA pairs from documents with human review workflow via [Label Studio](https://github.com/HumanSignal/label-studio/). Includes source tracking and quality filtering for creating ground truth evaluation datasets.
+Extracts QA pairs from documents with human review workflow via [Label Studio](https://github.com/HumanSignal/label-studio/). Includes source tracking and quality filtering for creating ground truth evaluation datasets.
 
 ## Features
 
-- Generate QA pairs with source references (line numbers, chunks)
+- Extract QA pairs with source references (line numbers, chunks)
 - Human review interface using Label Studio
 - Quality filtering based on review scores
 - Multiple export formats
@@ -21,8 +21,8 @@ Generate QA pairs from documents with human review workflow via [Label Studio](h
 
 ```bash
 # Clone the repository
-git clone git@github.com:eggai-tech/qa-generator-with-human-review.git
-cd qa-generator-with-human-review
+git clone git@github.com:eggai-tech/qa-extraction-with-human-review.git
+cd qa-extraction-with-human-review
 
 # Create and activate virtual environment
 python3 -m venv venv
@@ -55,12 +55,12 @@ Place your text documents in the `data/txt/` directory or alternatively if you h
 make convert-pdfs
 ```
 
-### 4. Generate QA Pairs
+### 4. Extract QA Pairs
 
 ```bash
 make qa-pairs
 ```
-This will process all the documents in `data/txt` and save the generated QA pairs as json files in `data/generated`
+This will process all the documents in `data/txt` and save the extracted QA pairs as json files in `data/extracted`
 
 ### 5. Filter QA Pairs based on Quality metrics
 
@@ -68,7 +68,7 @@ This will process all the documents in `data/txt` and save the generated QA pair
 make filter-qa-pairs
 ```
 
-This will filter the generated QA pairs based on quality metrics [faithfulness, answer relevance, context accuracy, context recall](https://docs.ragas.io/en/v0.1.21/concepts/metrics/) and save the filtered pairs in `data/filtered`.
+This will filter the extracted QA pairs based on quality metrics [faithfulness, answer relevance, context accuracy, context recall](https://docs.ragas.io/en/v0.1.21/concepts/metrics/) and save the filtered pairs in `data/filtered`.
 
 
 ## Human Review Process
@@ -94,7 +94,7 @@ make process-reviews EXPORT_FILE=path/to/export.json
 
 ```bash
 make setup              # Initial setup
-make qa-pairs           # Generate QA pairs
+make qa-pairs           # Extract QA pairs
 make filter-qa-pairs    # Filter QA pairs based on quality
 make export-labelstudio # Export for review
 make start-labelstudio  # Start Label Studio
@@ -114,7 +114,7 @@ api-endpoint:
   api_key: "your-key-here"
   model: "gpt-4o-mini"  # Model depends on provider
 
-generation:
+extraction:
   temperature: 0.7
   chunk_size: 2000
   num_pairs: 5  # QA pairs per chunk
