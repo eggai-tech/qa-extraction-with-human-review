@@ -3,6 +3,7 @@
 Generate QA pairs with source references (chunk location and character positions)
 """
 import json
+import time
 from pathlib import Path
 from typing import Dict, Any
 
@@ -125,6 +126,7 @@ def generate_qa_pairs_with_refs(chunk_data, prompt, num_pairs=None):
                 'line_start': chunk_data['line_start'],
                 'line_end': chunk_data['line_end'],
                 'chunk_preview': chunk_data['preview'],
+                'chunk_text': chunk_text,
                 'source_document': chunk_data.get('source_document', '')
             }
             
@@ -203,10 +205,15 @@ def main():
     # load qa prompt from config
     prompt = get_prompt(config, "qa_generation_v2")
     print(f"Using prompt: {prompt}")
+    start = time.perf_counter()
     for input_file in tqdm(list(input_dir.iterdir())):
         # Input and output paths
         output_base = Path(input_file).stem
         output_file = f"data/generated/{output_base}_qa_pairs_with_refs.json"
+        # if exists, skip
+        if Path(output_file).exists():
+            print(f"Output file {output_file} already exists. Skipping...")
+            continue
 
         # Store source document info
         source_doc_info = {
@@ -256,6 +263,9 @@ def main():
         print(f"  - data/review/{output_base}_with_refs.json (JSON with full references)")
         print(f"  - data/review/{output_base}_review.csv (CSV for spreadsheet review)")
         print(f"  - data/review/{output_base}_review.md (Markdown for easy reading)")
+
+    end = time.perf_counter()
+    print(f"\nTotal processing time: {end - start:.2f} seconds")
 
 
 if __name__ == "__main__":
