@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 import time
@@ -6,8 +5,10 @@ from pathlib import Path
 
 import yaml
 from datasets import Dataset
-from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
 from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 with open('configs/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
@@ -17,62 +18,58 @@ api_key = config['api-endpoint']['api_key']
 os.environ["OPENAI_API_KEY"] = api_key
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Filter QA pairs based on criteria")
-    parser.add_argument(
-        "--input_dir",
-        type=str,
-        default="data/generated",
-        help="Directory containing the input JSON files with QA pairs",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="data/filtered",
-        help="Directory to save the filtered QA pairs",
-    )
-    parser.add_argument(
-        "--rejected_dir",
-        type=str,
-        default="data/rejected",
-        help="Directory to save the rejected QA pairs",
-    )
-    parser.add_argument(
-        "--faithfulness_threshold",
-        type=float,
-        default=0.9,
-        help="Minimum faithfulness score to keep a QA pair",
-    )
-    parser.add_argument(
-        "--answer_relevancy_threshold",
-        type=float,
-        default=0.7,
-        help="Minimum answer relevance score to keep a QA pair",
-    )
-    parser.add_argument(
-        "--context_precision_threshold",
-        type=float,
-        default=0.65,
-        help="Minimum context precision score to keep a QA pair",
-    )
-    parser.add_argument(
-        "--context_recall_threshold",
-        type=float,
-        default=0.9,
-        help="Minimum context recall score to keep a QA pair",
-    )
-    args = parser.parse_args()
-    input_dir = Path(args.input_dir)
-    output_dir = Path(args.output_dir)
-    rejected_dir = Path(args.rejected_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    rejected_dir.mkdir(parents=True, exist_ok=True)
+def deduplicate_questions(qa_pairs, threshold):
+    questions = [qa_pair["question"] for qa_pair in qa_pairs]
+    model = SentenceTransformer('all-MiniLM-L6-v2')
 
+    # Compute embeddings
+    embeddings = model.encode(questions)
+    # compute cosine similarity matrix
+    similarity_matrix = cosine_similarity(embeddings)
+    # drop duplicates based on the threshold
+    unique_indices = set()
+    for i in range(len(questions)):
+        if i in unique_indices:
+            continue
+        unique_indices.add(i)
+        for j in range(i + 1, len(questions)):
+            if similarity_matrix[i][j] >= threshold:
+                unique_indices.add(j)
+
+    # report number of duplicates
+    num_duplicates = len(questions) - len(unique_indices)
+    print(f"Found {num_duplicates} duplicate questions with threshold {threshold}.")
+    # return the unique qa_pairs
+    return [qa_pairs[i] for i in unique_indices]
+
+
+def main():
+    input_dir = Path("data/generated")
+    dedup_dir = Path("data/generated/deduplicated")
+    filtered_dir = Path("data/generated/filtered")
+    rejected_dir = Path("data/generated/rejected")
+    filtered_dir.mkdir(parents=True, exist_ok=True)
+    rejected_dir.mkdir(parents=True, exist_ok=True)
+    dedup_dir.mkdir(parents=True, exist_ok=True)
+
+    # load the thresholds from the config file
+    faithfulness_threshold = config['filtering']['faithfulness_threshold']
+    answer_relevancy_threshold = config['filtering']['answer_relevancy_threshold']
+    context_precision_threshold = config['filtering']['context_precision_threshold']
+    deduplicate_threshold = config['filtering']['deduplicate_threshold']
     start = time.perf_counter()
     for input_file in input_dir.glob("*.json"):
         print(f"Processing {input_file.name}...")
         with open(input_file, 'r', encoding='utf-8') as f:
             qa_pairs = json.load(f)
+
+        # deduplicate the qa_pairs if necessary
+        if deduplicate_threshold is not None:
+            qa_pairs = deduplicate_questions(qa_pairs, deduplicate_threshold)
+            # save the deduplicated pairs
+            dedup_file = dedup_dir / input_file.name
+            with open(dedup_file, 'w', encoding='utf-8') as f:
+                json.dump(qa_pairs, f, indent=2, ensure_ascii=False)
 
         filtered_pairs = []
         rejected_pairs = []
@@ -90,33 +87,34 @@ def main():
                 "ground_truth": [answer]
             }
             metrics = {}
-            score = evaluate(Dataset.from_dict(data_sample), metrics=[faithfulness, answer_relevancy, context_recall])
-            metrics["faithfulness"] = score["faithfulness"][0]
-            metrics["answer_relevancy"] = score["answer_relevancy"][0]
-            metrics["context_recall"] = score["context_recall"][0]
-            # compute context precision
-            data_sample["contexts"] = [contexts]
-            score = evaluate(Dataset.from_dict(data_sample), metrics=[context_precision])
-            metrics["context_precision"] = score["context_precision"][0]
+            should_keep = True
+            if faithfulness_threshold is not None:
+                score = evaluate(Dataset.from_dict(data_sample), metrics=[faithfulness])
+                metrics["faithfulness"] = score["faithfulness"][0]
+                should_keep = should_keep and (metrics["faithfulness"] >= faithfulness_threshold)
+            if answer_relevancy_threshold is not None:
+                score = evaluate(Dataset.from_dict(data_sample), metrics=[answer_relevancy])
+                metrics["answer_relevancy"] = score["answer_relevancy"][0]
+                should_keep = should_keep and (metrics["answer_relevancy"] >= answer_relevancy_threshold)
+
+            if context_precision_threshold is not None:
+                # compute context precision
+                data_sample["contexts"] = [contexts]
+                score = evaluate(Dataset.from_dict(data_sample), metrics=[context_precision])
+                metrics["context_precision"] = score["context_precision"][0]
+                should_keep = should_keep and (metrics["context_precision"] >= context_precision_threshold)
+
             # save metrics
             qa_pair["metrics"] = metrics
             qa_pairs_with_metrics.append(qa_pair)
 
-            if (metrics["faithfulness"] >= args.faithfulness_threshold and
-                metrics["answer_relevancy"] >= args.answer_relevancy_threshold and
-                metrics["context_precision"] >= args.context_precision_threshold and
-                metrics["context_recall"] >= args.context_recall_threshold):
-
+            if should_keep:
                 filtered_pairs.append(qa_pair)
             else:
                 print(f"Rejected pair: {qa_pair['question']} -> {qa_pair['answer']}")
                 rejected_pairs.append(qa_pair)
 
-        # resave the qa_pairs with metrics
-        with open(input_file, 'w', encoding='utf-8') as f:
-            json.dump(qa_pairs_with_metrics, f, indent=2, ensure_ascii=False)
-
-        output_file = output_dir / input_file.name
+        output_file = filtered_dir / input_file.name
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(filtered_pairs, f, indent=2, ensure_ascii=False)
 

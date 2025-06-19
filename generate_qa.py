@@ -7,8 +7,8 @@ import time
 from pathlib import Path
 from typing import Dict, Any
 
-from openai import OpenAI
 import yaml
+from openai import OpenAI
 from tqdm import tqdm
 
 # Load configuration
@@ -22,29 +22,31 @@ client = OpenAI(
     base_url=api_config['api_base']
 )
 
+
 def read_document(file_path):
     """Read document content"""
     with open(file_path, 'r', encoding='utf-8') as f:
         return f.read()
+
 
 def chunk_text_with_positions(text, chunk_size=None, overlap=200, source_document=None):
     """Split text into overlapping chunks with position tracking"""
     # Use chunk_size from config if not specified
     if chunk_size is None:
         chunk_size = config.get('generation', {}).get('chunk_size', 2000)
-        
+
     chunks = []
     start = 0
     chunk_id = 0
-    
+
     while start < len(text):
         end = min(start + chunk_size, len(text))
         chunk_text = text[start:end]
-        
+
         # Find line numbers for this chunk
         lines_before = text[:start].count('\n')
         lines_in_chunk = chunk_text.count('\n')
-        
+
         chunk_data = {
             'id': chunk_id,
             'text': chunk_text,
@@ -54,69 +56,69 @@ def chunk_text_with_positions(text, chunk_size=None, overlap=200, source_documen
             'line_end': lines_before + lines_in_chunk + 1,
             'preview': chunk_text[:100].replace('\n', ' ') + '...'
         }
-        
+
         if source_document:
             chunk_data['source_document'] = source_document
-            
+
         chunks.append(chunk_data)
-        
+
         chunk_id += 1
         start = end - overlap if end < len(text) else end
-    
+
     return chunks
+
 
 def find_answer_location(answer, chunk_text):
     """Try to find the approximate location of the answer in the chunk"""
     # Clean the answer for searching
     answer_words = answer.lower().split()[:5]  # First 5 words
     search_text = ' '.join(answer_words)
-    
+
     # Try to find in chunk
     chunk_lower = chunk_text.lower()
     pos = chunk_lower.find(search_text)
-    
+
     if pos != -1:
         # Find the line number within chunk
         lines_before = chunk_text[:pos].count('\n')
         return lines_before
-    
+
     return None
 
-def generate_qa_pairs_with_refs(chunk_data, prompt, num_pairs=None):
+
+def generate_qa_pairs_with_refs(chunk_data, prompt, num_pairs, summary=""):
     """Generate QA pairs from a text chunk with references"""
     chunk_text = chunk_data['text']
-    
-    # Use num_pairs from config if not specified
-    if num_pairs is None:
-        num_pairs = config.get('generation', {}).get('num_pairs', 5)
-    
+
     prompt = prompt.format(
         chunk_text=chunk_text,
-        num_pairs=num_pairs
+        num_pairs=num_pairs,
+        summary=summary
     )
 
     try:
         response = client.chat.completions.create(
             model=api_config['model'],
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that creates high-quality question-answer pairs for training data. Try to use direct quotes from the text when possible."},
+                {"role": "system",
+                 "content": "You are a helpful assistant that creates high-quality question-answer pairs for training data. Try to use direct quotes from the text when possible."},
                 {"role": "user", "content": prompt}
             ],
             temperature=config.get('generation', {}).get('temperature', 0.7)
         )
-        
+
         # Parse the response
         content = response.choices[0].message.content
-        
+
         # Extract JSON from markdown code blocks if present
         if '```json' in content:
             content = content.split('```json')[1].split('```')[0].strip()
         elif '```' in content:
             content = content.split('```')[1].split('```')[0].strip()
-        
+
         # Parse JSON and add references
         qa_pairs = json.loads(content)
-        
+
         # Add reference information to each QA pair
         for qa in qa_pairs:
             qa['reference'] = {
@@ -129,29 +131,47 @@ def generate_qa_pairs_with_refs(chunk_data, prompt, num_pairs=None):
                 'chunk_text': chunk_text,
                 'source_document': chunk_data.get('source_document', '')
             }
-            
+
             # Try to find more specific location for the answer
             answer_line = find_answer_location(qa['answer'], chunk_text)
             if answer_line is not None:
                 qa['reference']['answer_line_in_chunk'] = answer_line
                 qa['reference']['answer_line_in_doc'] = chunk_data['line_start'] + answer_line
-        
+
         return qa_pairs
-        
+
     except Exception as e:
         print(f"Error generating QA pairs: {e}")
         return []
+
+
+def generate_summary(document_text: str) -> str:
+    try:
+        summary_prompt = get_prompt(config, "summary")
+        summary_response = client.chat.completions.create(
+            model=api_config['model'],
+            messages=[
+                {"role": "system", "content": summary_prompt},
+                {"role": "user", "content": document_text}
+            ],
+            temperature=config.get('generation', {}).get('temperature', 0.1)  # Use lower temperature for summaries
+        )
+        return summary_response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error generating summary: {e}")
+        return ""
+
 
 def create_review_format(qa_pairs, output_base):
     """Create different review formats"""
     # Create review directory
     review_dir = Path("data/review")
     review_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # 1. JSON format with full references
     with open(review_dir / f"{output_base}_with_refs.json", 'w', encoding='utf-8') as f:
         json.dump(qa_pairs, f, indent=2, ensure_ascii=False)
-    
+
     # 2. CSV format for spreadsheet review
     import csv
     with open(review_dir / f"{output_base}_review.csv", 'w', newline='', encoding='utf-8') as f:
@@ -160,7 +180,7 @@ def create_review_format(qa_pairs, output_base):
             'ID', 'Question', 'Answer', 'Quality (1-5)', 'Accuracy (Y/N)', 'Notes',
             'Chunk ID', 'Lines', 'Chunk Preview'
         ])
-        
+
         for i, qa in enumerate(qa_pairs):
             ref = qa['reference']
             writer.writerow([
@@ -174,12 +194,12 @@ def create_review_format(qa_pairs, output_base):
                 f"{ref['line_start']}-{ref['line_end']}",
                 ref['chunk_preview']
             ])
-    
+
     # 3. Markdown format for easy reading
     with open(review_dir / f"{output_base}_review.md", 'w', encoding='utf-8') as f:
         f.write(f"# QA Pairs Review Document\n\n")
         f.write(f"Total QA pairs: {len(qa_pairs)}\n\n")
-        
+
         for i, qa in enumerate(qa_pairs):
             ref = qa['reference']
             f.write(f"## QA Pair {i + 1}\n\n")
@@ -193,6 +213,7 @@ def create_review_format(qa_pairs, output_base):
             f.write(f"- Chunk preview: *{ref['chunk_preview']}*\n\n")
             f.write("---\n\n")
 
+
 def get_prompt(config: Dict[str, Any], prompt_name: str) -> str:
     """Get prompt by name"""
     prompts = config.get('prompts', {})
@@ -200,20 +221,21 @@ def get_prompt(config: Dict[str, Any], prompt_name: str) -> str:
         raise ValueError(f"Prompt '{prompt_name}' not found in configuration")
     return prompts[prompt_name]
 
+
 def main():
+    prompt_name = config.get('generation', {}).get('prompt_name', 'qa_generation_v3')
+    num_pairs = config.get('generation', {}).get('num_pairs', 5)
+    use_summary = config.get('generation', {}).get('summary', True)
     input_dir = Path("data/txt")
     # load qa prompt from config
-    prompt = get_prompt(config, "qa_generation_v2")
+    prompt = get_prompt(config, prompt_name)
     print(f"Using prompt: {prompt}")
     start = time.perf_counter()
+    total_qa_pairs = 0
     for input_file in tqdm(list(input_dir.iterdir())):
         # Input and output paths
         output_base = Path(input_file).stem
         output_file = f"data/generated/{output_base}_qa_pairs_with_refs.json"
-        # if exists, skip
-        if Path(output_file).exists():
-            print(f"Output file {output_file} already exists. Skipping...")
-            continue
 
         # Store source document info
         source_doc_info = {
@@ -228,6 +250,11 @@ def main():
         print(f"Reading document from {input_file}...")
         text = read_document(input_file)
         print(f"Document length: {len(text)} characters, {text.count(chr(10))} lines")
+        if use_summary:
+            print("Generating document summary...")
+            summary = generate_summary(text)
+        else:
+            summary = ""
 
         chunks = chunk_text_with_positions(text, source_document=source_doc_info["filename"])
         if len(chunks) == 0:
@@ -238,8 +265,8 @@ def main():
         all_qa_pairs = []
 
         for i, chunk in enumerate(chunks):
-            print(f"Processing chunk {i+1}/{len(chunks)} (lines {chunk['line_start']}-{chunk['line_end']})...")
-            qa_pairs = generate_qa_pairs_with_refs(chunk, prompt)
+            print(f"Processing chunk {i + 1}/{len(chunks)} (lines {chunk['line_start']}-{chunk['line_end']})...")
+            qa_pairs = generate_qa_pairs_with_refs(chunk, prompt, num_pairs, summary)
             all_qa_pairs.extend(qa_pairs)
             print(f"  Generated {len(qa_pairs)} QA pairs")
 
@@ -250,7 +277,7 @@ def main():
             json.dump(all_qa_pairs, f, indent=2, ensure_ascii=False)
 
         print(f"Saved to {output_file}")
-
+        total_qa_pairs += len(all_qa_pairs)
         # Create review formats
         create_review_format(all_qa_pairs, output_base)
         print(f"Created review files in data/review/")
@@ -265,6 +292,7 @@ def main():
         print(f"  - data/review/{output_base}_review.md (Markdown for easy reading)")
 
     end = time.perf_counter()
+    print(f"\nTotal QA pairs generated across all documents: {total_qa_pairs}")
     print(f"\nTotal processing time: {end - start:.2f} seconds")
 
 

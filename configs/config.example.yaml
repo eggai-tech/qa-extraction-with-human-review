@@ -9,9 +9,18 @@ api-endpoint:
 
 # Generation settings
 generation:
-  temperature: 0.7      # Higher = more creative, lower = more deterministic
-  chunk_size: 2000      # Size of text chunks for processing
-  num_pairs: 5          # Number of QA pairs to generate per chunk
+  temperature: 0.7                # Higher = more creative, lower = more deterministic
+  chunk_size: 2000                # Size of text chunks for processing
+  num_pairs: 5                    # Number of QA pairs to generate per chunk
+  summary: true                   # Whether to generate a summary of the document
+  prompt_name: qa_generation_v3   # Prompt to use for generating QA pairs
+
+# Query filtering setting
+filtering:
+  deduplicate_threshold: 0.8            # Whether to deduplicate questions
+  faithfulness_threshold: 0.8           # Minimum faithfulness threshold for question-answer pairs
+  answer_relevancy_threshold: 0.7       # Minimum relevancy threshold for answers
+  context_precision_threshold: 0.6      # Minimum precision threshold for context relevance
 
 # prompts for different tasks
 prompts:
@@ -44,7 +53,7 @@ prompts:
 
   # custom qa prompt
   qa_generation_v1: |
-    Create {num_pairs} question-answer pairs from this text for RAG system evaluation.
+    Generate high-quality question-answer pairs for LLM training.
   
     Rules:
     1. Questions must be about important facts in the text
@@ -68,7 +77,7 @@ prompts:
 
   # custom qa prompt
   qa_generation_v2: |
-    You are creating question-answer pairs for benchmarking the RAG system in the financial domain.
+    Generate high-quality question-answer pairs for LLM training.
     Example questions include:
       - What is the current stock price of a specific company?
       - What are the main revenue drivers for a specific company?
@@ -84,7 +93,7 @@ prompts:
     2. Answers must be directly supported by the text
     3. Add some context to the question such as company names, financial instruments, ISINs, etc.
     4. Write questions and answers in the language of the text.
-    4. Return JSON format only:
+    5. Return JSON format only:
 
     [
       {{
@@ -96,6 +105,43 @@ prompts:
         "answer": "Answer 2."
       }}
     ]
+
+    Text:
+    {chunk_text}
+
+  # custom qa prompt with summary context
+  qa_generation_v3: |
+    Generate high-quality question-answer pairs for LLM training.
+
+    Document Summary:
+    {summary}
+    
+    Use this summary to understand the document's overall context. However, generate all questions and answers strictly from the main text provided below.
+    
+    Focus Areas:
+      - Financial instruments, especially bonds, equities, derivatives, etc.
+      - Issuer details, ISINs, maturity dates, terms & conditions
+      - Financial metrics, issuance volumes, and key legal or regulatory elements
+    
+    Avoid vague or overly general questions. Ensure each question is specific, fact-based, and clearly tied to the source text.
+
+    Instructions:
+      1. Create exactly {num_pairs} question-answer pairs.
+      2. Questions must cover important facts from the text.
+      3. Answers must be verifiable and explicitly supported by the text.
+      4. Add context to each question based on the summary, such as company names, financial instruments, ISINs, etc.
+      5. Questions and answers must be in the same language as the source text.
+      6. Return JSON format only:
+      [
+        {{
+          "question": "Question 1?",
+          "answer": "Answer 1."
+        }},
+        {{
+          "question": "Question 2?",
+          "answer": "Answer 2."
+        }}
+      ]
 
     Text:
     {chunk_text}

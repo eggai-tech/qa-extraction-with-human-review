@@ -54,6 +54,7 @@ Place your text documents in the `data/txt/` directory or alternatively if you h
 ```bash
 make convert-pdfs
 ```
+We use [docling](https://github.com/docling-project/docling) library to convert PDFs to text files. The converted files will be saved in `data/txt/`.
 
 ### 4. Extract QA Pairs
 
@@ -120,6 +121,36 @@ extraction:
   num_pairs: 5  # QA pairs per chunk
 ```
 
+In order to add a custom prompt for the QA generation step (`make qa-pairs`), you can edit the `prompts` section in the config, e.g.:
+
+```yaml
+prompts:
+  my_qa_generation: |
+    Create {num_pairs} question-answer pairs from this text for LLM training.
+
+    Rules:
+    1. Questions must be about important facts in the text
+    2. Answers must be directly supported by the text
+    3. Return JSON format only:
+
+    [
+      {{
+        "question": "Question 1?",
+        "answer": "Answer 1."
+      }},
+      {{
+        "question": "Question 2?",
+        "answer": "Answer 2."
+      }}
+    ]
+
+    Text:
+    {chunk_text}
+```
+and then run:
+```bash
+python generate_qa.py --prompt my_qa_generation
+```
 
 ## Troubleshooting
 
@@ -132,16 +163,263 @@ extraction:
 
 ```json
 {
-  "question": "What is the issue price of the EUR 15,000,000 Floating Rate Preferred Senior Notes?",
-  "answer": "The issue price is 100 per cent free to trade.",
-  "reference": {
-    "chunk_id": 0,
-    "line_start": 1,
-    "line_end": 45,
-    "source_document": "DE000DDA0NU1.pdf.txt"
+    "question": "What is the total nominal amount of the tranche of securities issued by Erste Group Bank AG?",
+    "answer": "The tranche of securities is issued in a total nominal amount of up to EUR 50.000.000.",
+    "reference": {
+      "chunk_id": 1,
+      "char_start": 3800,
+      "char_end": 7800,
+      "line_start": 72,
+      "line_end": 141,
+      "chunk_preview": "Erste Group Bank AG (die \"Emittentin\") vom 28. Oktober 2020, und etwaigen  Nachträgen,  bzw.  einem ...",
+      "source_document": "AT0000A2VDG3.txt"
+    }
   }
-}
 ```
+
+## Creating a Question-Answer Benchmark
+Let's create a sample question-answering benchmark to evaluate the RAG-based system performance on a given corpus.
+We'll use a small subset of 10 documents from the [FinCorpus-DE10k](https://huggingface.co/datasets/anhaltai/fincorpus-de-10k) dataset.
+The documents can be found in `data/pdf` directory.
+
+We'll split the tasks into the following steps:
+1. Convert the PDF documents to text files using.
+2. Generate question-answer pairs from the text files.
+3. Score the generated QA pairs based on quality metrics.
+4. Verify the QA pairs using human review via Label Studio.
+
+### 1. Convert PDF to Text
+Some PDFs are scans of the original documents, so we need to use OCR capabilities to convert them to text.
+Fortunately, the `docling` library provides a convenient way to do this. We convert the sample PDFs to markdown files
+using the `make convert-pdfs` command.
+
+Although it's doing a good job it's not free of errors, so for some files we need to manually review the generated text
+files in `data/txt/` directory and fix any issues. 
+
+Below are sample errors found in the generated text files:
+
+![sample doc](data/img/DE000A35JQF7_snippet.jpg)
+
+
+### 2. Generate Question-Answer Pairs
+To generate question-answer pairs from the text files, we can use the `make qa-pairs` command.
+To configure the chunking strategy and the number of QA pairs to generate per chunk, edit the `configs/config.yaml` file.
+One can also configure the QA generation prompt in `configs/config.yaml` under the `prompts` section.
+If we use the generic prompt, i.e.:
+```
+Create {num_pairs} question-answer pairs from this text for LLM training.
+
+Rules:
+1. Questions must be about important facts in the text
+2. Answers must be directly supported by the text
+3. Return JSON format only:
+[
+  {{
+    "question": "Question 1?",
+    "answer": "Answer 1."
+  }},
+  {{
+    "question": "Question 2?",
+    "answer": "Answer 2."
+  }}
+]
+
+Text:
+{chunk_text}
+```
+lots of QA pairs will be incomplete, meaning the questions are very specific to the information in the chunk
+but lack context to be useful for a RAG-based system. Sample questions of this type are:
+- What is the submission period for the securities as specified in the text? 
+- What is the ISIN code for the securities mentioned in the document?
+- What risks are associated with variable interest rate bonds according to the text?
+
+We can see that the above questions do make sense, but they are too specific to the chunk and do not provide enough context.
+
+To improve the QA generation, we can use a custom prompt, which apart from the chunk text also includes the document
+summary in order to provide the necessary context for the questions. Here's the more optimized prompt:
+
+```
+    Generate high-quality question-answer pairs for LLM training.
+
+    Document Summary:
+    {summary}
+    
+    Use this summary to understand the document's overall context. However, generate all questions and answers strictly from the main text provided below.
+    
+    Focus Areas:
+      - Financial instruments, especially bonds, equities, derivatives, etc.
+      - Issuer details, ISINs, maturity dates, terms & conditions
+      - Financial metrics, issuance volumes, and key legal or regulatory elements
+    
+    Avoid vague or overly general questions. Ensure each question is specific, fact-based, and clearly tied to the source text.
+
+    Instructions:
+      1. Create exactly {num_pairs} question-answer pairs.
+      2. Questions must cover important facts from the text.
+      3. Answers must be verifiable and explicitly supported by the text.
+      4. Add context to each question based on the summary, such as company names, financial instruments, ISINs, etc.
+      5. Questions and answers must be in the same language as the source text.
+      6. Return JSON format only:
+      [
+        {{
+          "question": "Question 1?",
+          "answer": "Answer 1."
+        }},
+        {{
+          "question": "Question 2?",
+          "answer": "Answer 2."
+        }}
+      ]
+
+    Text:
+    {chunk_text}
+```
+
+On top of QA generation, we make one additional LLM call per document to generate a summary of the document.
+Here are some examples of the generated question-answer pairs:
+- Where can I find the prospectus for the bond with ISIN AT0000A268B3?
+- What is the total amount of the Zero Coupon Notes issued by Deutsche Pfandbriefbank AG?
+- Welchen Zinssatz haben die Schuldverschreibungen der Erste Group Bank?
+
+The above questions are more complete, in the sense that they provide enough context to be useful for a RAG-based system.
+
+### 3. Score/filter QA Pairs
+To score and the generated QA pairs based on quality metrics, we can use the `make filter-qa-pairs` command.
+
+In order to configure the scoring/filtering step edit the `filtering` section in the `configs/config.yaml` file:
+```yaml
+# Query filtering setting
+filtering:
+  deduplicate_threshold: 0.7                # Whether to deduplicate questions
+  faithfulness_threshold: 0.8               # Minimum faithfulness threshold for question-answer pairs
+  answer_relevancy_threshold: 0.7           # Minimum relevancy threshold for answers
+  context_precision_threshold: 0.6          # Minimum precision threshold for context relevance
+```
+
+First of all, we use semantic deduplication to remove similar questions. To this end we use an embedding model
+(Sentence Transformers) to compute the embeddings of the questions and then use cosine similarity to filter out similar questions.
+If the cosine similarity between two questions is above the `deduplicate_threshold` (default 0.7), we keep only one of them.
+
+After the semantic deduplication step, we score the question-answer pairs based on the following quality metrics:
+- **Faithfulness**: Measures if the answer is supported by the text. The generated answer is regarded as faithful if all the claims made in the answer can be inferred from the given context. LLM is used to extract the claims from the answer and then check if they can be found in the context.
+- **Answer Relevancy**: Measures if the answer is relevant to the question. A lower score is assigned to answers that are incomplete or contain redundant information and higher scores indicate better relevancy. The Answer Relevancy is defined as the mean cosine similarity of the original question to a number of artifical questions, which where generated (reverse engineered) by the LLM based on the answer.
+- **Context Precision**: Context Precision is a metric that evaluates for a given question whether all of the relevant items (i.e. our answer) are ranked higher than other answers (randomly selected from the extracted QA pairs). This is an indicator that the question is very specific and the answer can be easily distinguished from other answers.
+
+We give the thresholds for the quality metrics in the `configs/config.yaml` file, and the QA pairs that  meet the thresholds are saved in the `data/generated/filtered` directory.
+The QA paris that do not meet the thresholds are saved in the `data/generated/rejected` directory.
+
+Below we show the distribution of the Faithfulness and Answer Relevancy for the QA extracted from our sample documents:
+![QA quality metrics](data/img/distribution_of_qa_metrics.png)
+
+We can see that although most of the QA paris have high Answer Relevancy, around 65% of the pairs have low (near zero) Faithfulness score, which means that the answers are not supported by the text.
+
+Let's examine some examples of the QA pairs that have low Faithfulness score:
+
+```
+Question: What type of financial instrument is being issued by Deutsche Pfandbriefbank AG, and what is the initial issuance price?
+Answer: The financial instrument being issued is EUR 259,500,000 Zero Coupon Notes, and the initial issuance price is 38.53205573%.
+```
+Here, without looking at the context, we can see that model incorrectly takes percentage as the initial issuance price, which is not correct.
+
+```
+Question: What is the maturity date of the EUR 259,500,000 Zero Coupon Notes issued by Deutsche Pfandbriefbank AG?
+Answer: The maturity date is 8 August 2046.
+
+Context:
+
+## INTEREST (§ 3)
+ZINSEN (§ 3)
+- □ Fixed Rate Notes (other than Zero Coupon Notes)
+Festverzinsliche Schuldverschreibungen (außer Nullkupon-Schuldverschreibungen)
+-  Zero Coupon Notes
+Nullkupon-Schuldverschreibungen
+Accrual of Interest
+Auflaufende Zinsen
+Amortisation Yield
+3.23 per cent per annum 3.23 % p.a.
+Emissionsrendite
+## Day Count Fraction
+Zinstagequotient
+□ Actual/Actual (ISDA)
+□ Actual/Actual (ICMA)
+□ Actual/365 (Fixed)
+□ Actual/360
+ 30/360 or 360/360 or Bond Basis
+□ 30E/360 or Eurobond Basis
+## REDEMPTION (§ 5) RÜCKZAHLUNG (§ 5)
+Redemption at Maturity
+Rückzahlung bei Endfälligkeit
+Maturity Date
+8 August 2046
+```
+
+Here the answer is correct and supported by the context, the LLM-based Faithfulness metric failed to capture that.
+We can see that those metrics have to be taken with a grain of salt, as they are not perfect and can fail to capture correctly formulated QA pairs.
+
+```
+Question: What is the ISIN Code for the Zero Coupon Notes issued by Deutsche Pfandbriefbank AG?
+Answer: The ISIN Code for the Zero Coupon Notes is DE000A2AAVQ6.
+
+Context:
+
+Issuing Agent/specified office
+Paying Agent(s)/specified office(s) Zahlstelle(n)/bezeichnete Geschäftsstelle(n)
+## TAXATION (§ 7) STEUERN (§ 7)
+-  Compensation for withholding tax Ausgleich für Quellensteuern
+- □ No compensation for withholding tax Kein Ausgleich für Quellensteuern
+## RESOLUTIONS OF THE HOLDERS (§ 11) BESCHLÜSSE DER GLÄUBIGER (§ 11)
+Applicable Anwendbar
+NOTICES (§12) MITTEILUNGEN (§12)
+Place and medium of publication Ort und Medium der Bekanntmachung
+-  Germany (federal gazette) Deutschland (Bundesanzeiger)
+- □ Website of the stock exchange
+-  Website of the Issuer Internetseite der Emittentin
+Deutsche Pfandbriefbank AG Freisinger Straße 5 85716 Unterschleissheim Germany
+Deutsche Pfandbriefbank AG Freisinger Straße 5 85716 Unterschleissheim Germany
+No
+Nein www.pfandbriefbank.com
+## GOVERNING LAW (§ 13) ANWENDBARES RECHT (§13 )
+Governing Law Anwendbares Recht
+LANGUAGE (§ 14) SPRACHE (§ 14)
+Language of Conditions Sprache der Bedingungen
+□ German only ausschließlich Deutsch
+
+English only ausschließlich Englisch
+□ English and German (English controlling)
+Englisch und Deutsch (englischer Text maßgeblich)
+-  German and English (German controlling) Deutsch und Englisch (deutscher Text maßgeblich) ]
+German Law Deutsches Recht
+## PART II - OTHER INFORMATION
+## 1. Essential information
+Interest of natural and legal persons, including conflict of interests, involved in the issue/offer
+-  Save as discussed in the Base Prospectus in Section XII. 'Subscription and Sale', so far as the Issuer is aware, no person involved in the offer of the Notes has a material interest in the offer.
+- □ Other interest
+- 2. Information concerning the Notes (others than those related to specific articles of terms and conditions)
+## Securities Identification Numbers
+Common Code
+ISIN Code
+DE000A2AAVQ6
+German Securities Code
+A2AAVQ
+```
+
+Again the answer is correct and supported by the context, but the LLM-based Faithfulness metric failed to capture that.
+
+To conclude, the quality metrics are not perfect and can fail to capture correctly formulated QA pairs. It is recommended to manually review the QA pairs in the `data/generated/recjected` to recover the false negatives.
+
+### Verify the QA pairs in Label Studio.
+Since the automatic scoring / filtering step is not perfect, we can use human review to verify the QA pairs.
+To do this, we can use the `make export-labelstudio` + `make start-labelstudio` commands to export the QA pairs for review and start the Label Studio server.
+
+Here's the example of the Label Studio interface for reviewing the QA pairs:
+
+![Label Studio interface](data/img/label_studio_snippet.png)
+
+Here we simplify the task and ask the user only two questions:
+1. Is the answer accurate based on the question and context? YES/NO
+2. Is the question relevant to and well-formed? YES/NO
+
+After the review is done we can export the results and save the final QA pairs using `make process-reviews` command.
 
 ## License
 

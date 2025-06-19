@@ -4,37 +4,32 @@ Export QA pairs to Label Studio format for review
 """
 import json
 from pathlib import Path
-import argparse
 from typing import List
 
 
-def convert_to_labelstudio_format(qa_pairs_files: List[Path], original_doc_files: List[Path]):
+def convert_to_labelstudio_format(qa_pairs_files: List[Path]):
     """Convert QA pairs with references to Label Studio format"""
 
     # Create Label Studio tasks
     tasks = []
 
     i = 0
-    for qa_pairs_file, original_doc_file in zip(qa_pairs_files, original_doc_files):
+    for qa_pairs_file in qa_pairs_files:
         # Read QA pairs
         with open(qa_pairs_file, 'r', encoding='utf-8') as f:
             qa_pairs = json.load(f)
 
-        # Read original document
-        with open(original_doc_file, 'r', encoding='utf-8') as f:
-            full_text = f.read()
-
         # Get source document name
-        doc_name = Path(original_doc_file).name
+        doc_name = qa_pairs[0].get('reference', {}).get('source_document', 'Unknown Document')
 
         for qa in qa_pairs:
             i += 1
             ref = qa.get('reference', {})
 
             # Extract the relevant chunk from the original document
-            chunk_start = ref.get('char_start', 0)
-            chunk_end = ref.get('char_end', len(full_text))
-            context_chunk = full_text[chunk_start:chunk_end]
+            chunk_start = ref['char_start']
+            chunk_end = ref['char_end']
+            context_chunk = ref['chunk_text']
 
             # Create a task for Label Studio
             task = {
@@ -47,7 +42,7 @@ def convert_to_labelstudio_format(qa_pairs_files: List[Path], original_doc_files
 
                     # Source document info
                     "source_document": doc_name,
-                    "document_path": str(original_doc_file),
+                    "document_path": str("data/txt/" + doc_name),
 
                     # Metadata
                     "chunk_id": ref.get('chunk_id', ''),
@@ -93,26 +88,14 @@ def create_labelstudio_config():
     
     <Choices name="accuracy" toName="question" choice="single" showInLine="true">
       <Header value="Is the answer accurate based on the context?" />
-      <Choice value="Accurate" />
-      <Choice value="Partially Accurate" />
-      <Choice value="Inaccurate" />
-      <Choice value="Cannot Determine" />
+      <Choice value="Yes" />
+      <Choice value="No" />
     </Choices>
     
     <Choices name="relevance" toName="question" choice="single" showInLine="true">
       <Header value="Is the question relevant and well-formed?" />
-      <Choice value="Highly Relevant" />
-      <Choice value="Relevant" />
-      <Choice value="Somewhat Relevant" />
-      <Choice value="Not Relevant" />
-    </Choices>
-    
-    <Choices name="quality" toName="answer" choice="single" showInLine="true">
-      <Header value="Overall quality of the QA pair for training?" />
-      <Choice value="Excellent" />
-      <Choice value="Good" />
-      <Choice value="Fair" />
-      <Choice value="Poor" />
+      <Choice value="Yes" />
+      <Choice value="No" />
     </Choices>
     
     <Choices name="issues" toName="answer" choice="multiple" showInLine="true">
@@ -143,7 +126,6 @@ def create_labelstudio_config():
 
 def create_labelstudio_project_files(
         qa_pairs_files: List[Path],
-        original_doc_files: List[Path],
         output_dir: Path
 ):
     """Create all necessary files for Label Studio import"""
@@ -153,7 +135,7 @@ def create_labelstudio_project_files(
 
     # Convert to Label Studio format
     print("Converting QA pairs to Label Studio format...")
-    tasks = convert_to_labelstudio_format(qa_pairs_files, original_doc_files)
+    tasks = convert_to_labelstudio_format(qa_pairs_files)
 
     # Save tasks
     tasks_file = output_path / "qa_review_tasks.json"
@@ -254,41 +236,21 @@ Contact the project maintainer or refer to the main README for technical details
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Export QA pairs to Label Studio format')
-    parser.add_argument('--qa-dir', default='data/filtered',
-                        help='Path to directory containing JSON files with QA pairs', )
-    parser.add_argument('--doc-dir', default='data/txt',
-                        help='Path to directory containing original documents', )
-    parser.add_argument('--output-dir', default='data/labelstudio',
-                        help='Output directory for Label Studio files')
-
-    args = parser.parse_args()
-
+    qa_dir = "data/generated/rejected"
+    output_dir = Path("data/labelstudio")
     # Check if files exist
-    if not Path(args.qa_dir).exists():
+    if not Path(qa_dir).exists():
         print(f"Error: QA qa_dir not found: {args.qa_dir}")
         return
-    qa_files = list(Path(args.qa_dir).glob('*.json'))
+    qa_files = list(Path(qa_dir).glob('*.json'))
     if not qa_files:
-        print(f"Error: No QA files found in {args.qa_dir}")
+        print(f"Error: No QA files found in {qa_dir}")
         return
-
-    if not Path(args.doc_dir).exists():
-        print(f"Error: Document directory not found: {args.doc_dir}")
-        return
-    # make sure that corresponding documents exist
-    doc_files = []
-    for qa_file in qa_files:
-        doc_name = qa_file.stem.split('_')[0]  # Assuming the document name is the prefix of the QA file
-        doc_file = list(Path(args.doc_dir).glob(f'{doc_name}*'))
-        assert len(doc_file) == 1, f"Expected exactly one document for {qa_file}, found {len(doc_file)}"
-        doc_files.append(doc_file[0])
 
     # Create Label Studio files
     output_path = create_labelstudio_project_files(
         qa_files,
-        doc_files,
-        args.output_dir
+        output_dir
     )
 
     print(f"\n✅ Label Studio files created successfully!")
