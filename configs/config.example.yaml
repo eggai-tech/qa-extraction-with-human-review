@@ -21,6 +21,7 @@ filtering:
   faithfulness_threshold: 0.8           # Minimum faithfulness threshold for question-answer pairs
   answer_relevancy_threshold: 0.7       # Minimum relevancy threshold for answers
   context_precision_threshold: 0.6      # Minimum precision threshold for context relevance
+  input_dir: "data/generated"           # Directory for input data
 
 # prompts for different tasks
 prompts:

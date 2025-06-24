@@ -44,10 +44,10 @@ def deduplicate_questions(qa_pairs, threshold):
 
 
 def main():
-    input_dir = Path("data/generated")
-    dedup_dir = Path("data/generated/deduplicated")
-    filtered_dir = Path("data/generated/filtered")
-    rejected_dir = Path("data/generated/rejected")
+    input_dir = Path(config['filtering']['input_dir'])
+    dedup_dir = input_dir / "deduplicated"
+    filtered_dir = input_dir / "filtered"
+    rejected_dir = input_dir / "rejected"
     filtered_dir.mkdir(parents=True, exist_ok=True)
     rejected_dir.mkdir(parents=True, exist_ok=True)
     dedup_dir.mkdir(parents=True, exist_ok=True)
@@ -83,8 +83,7 @@ def main():
             data_sample = {
                 "question": [question],
                 "answer": [answer],
-                "contexts": [[context]],
-                "ground_truth": [answer]
+                "contexts": [[context]]
             }
             metrics = {}
             should_keep = True
@@ -100,6 +99,7 @@ def main():
             if context_precision_threshold is not None:
                 # compute context precision
                 data_sample["contexts"] = [contexts]
+                data_sample["ground_truth"] = [answer]
                 score = evaluate(Dataset.from_dict(data_sample), metrics=[context_precision])
                 metrics["context_precision"] = score["context_precision"][0]
                 should_keep = should_keep and (metrics["context_precision"] >= context_precision_threshold)

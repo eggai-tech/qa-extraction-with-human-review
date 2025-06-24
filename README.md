@@ -69,10 +69,12 @@ This will process all the documents in `data/txt` and save the extracted QA pair
 make filter-qa-pairs
 ```
 
-This will filter the extracted QA pairs based on quality metrics [faithfulness, answer relevance, context accuracy, context recall](https://docs.ragas.io/en/v0.1.21/concepts/metrics/) and save the filtered pairs in `data/filtered`.
+This will filter the extracted QA pairs based on quality metrics [faithfulness, answer relevance, context accuracy](https://docs.ragas.io/en/v0.1.21/concepts/metrics/) and save the filtered pairs in `data/filtered`.
 
 
-## Human Review Process
+### 6. Verify the QA Pairs in Label Studio
+
+As a final step, we can verify the QA pairs using human review via Label Studio. This allows us to ensure the quality of the extracted QA pairs.
 
 ```bash
 # 1. Export QA pairs for review
@@ -84,11 +86,13 @@ make start-labelstudio
 # 3. In Label Studio (http://localhost:8080):
 #    - Create project "QA Pairs Review"
 #    - Import label_config.xml and qa_review_tasks.json
-#    - Review QA pairs (rate accuracy, relevance, quality)
+#    - Review QA pairs: for each question/answer/context answer two simple yes/no questions: "Is the answer accurate based on the context?", "Is the question relevant and well-formed?"
+#    - Export the results after review: Export -> Choose 'JSON-MIN'
 
 # 4. Process review results
 make process-reviews EXPORT_FILE=path/to/export.json
 ```
+After the last step of processing the reviews, the final QA pairs will be saved in `data/labelstudio/verified_results`.
 
 
 ## Commands

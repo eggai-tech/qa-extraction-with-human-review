@@ -236,11 +236,11 @@ Contact the project maintainer or refer to the main README for technical details
 
 
 def main():
-    qa_dir = "data/generated/rejected"
+    qa_dir = "data/generated/filtered"
     output_dir = Path("data/labelstudio")
     # Check if files exist
     if not Path(qa_dir).exists():
-        print(f"Error: QA qa_dir not found: {args.qa_dir}")
+        print(f"Error: QA qa_dir not found: {qa_dir}")
         return
     qa_files = list(Path(qa_dir).glob('*.json'))
     if not qa_files:
