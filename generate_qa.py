@@ -29,7 +29,7 @@ def read_document(file_path):
         return f.read()
 
 
-def chunk_text_with_positions(text, chunk_size=None, overlap=200, source_document=None):
+def chunk_text_with_positions(text, chunk_size=None, overlap=200, source_document=None, summary=""):
     """Split text into overlapping chunks with position tracking"""
     # Use chunk_size from config if not specified
     if chunk_size is None:
@@ -42,6 +42,9 @@ def chunk_text_with_positions(text, chunk_size=None, overlap=200, source_documen
     while start < len(text):
         end = min(start + chunk_size, len(text))
         chunk_text = text[start:end]
+        if summary:
+            # Prepend summary if provided
+            chunk_text = summary + "\n\n" + chunk_text
 
         # Find line numbers for this chunk
         lines_before = text[:start].count('\n')
@@ -233,13 +236,16 @@ def main():
     start = time.perf_counter()
     total_qa_pairs = 0
     for input_file in tqdm(list(input_dir.iterdir())):
+        if input_file.is_dir():
+            continue
         # Input and output paths
         output_base = Path(input_file).stem
         output_file = f"data/generated/{output_base}_qa_pairs_with_refs.json"
 
         # Store source document info
+        filename = Path(input_file).name
         source_doc_info = {
-            "filename": Path(input_file).name,
+            "filename": filename,
             "path": input_file,
             "generated_from": str(Path(input_file).absolute())
         }
@@ -256,7 +262,7 @@ def main():
         else:
             summary = ""
 
-        chunks = chunk_text_with_positions(text, source_document=source_doc_info["filename"])
+        chunks = chunk_text_with_positions(text, source_document=source_doc_info["filename"], summary=summary)
         if len(chunks) == 0:
             print(f"No chunks generated from {input_file}. Skipping...")
             continue
@@ -265,7 +271,7 @@ def main():
         all_qa_pairs = []
 
         for i, chunk in enumerate(chunks):
-            print(f"Processing chunk {i + 1}/{len(chunks)} (lines {chunk['line_start']}-{chunk['line_end']})...")
+            print(f"Processing chunk {i + 1}/{len(chunks)}")
             qa_pairs = generate_qa_pairs_with_refs(chunk, prompt, num_pairs, summary)
             all_qa_pairs.extend(qa_pairs)
             print(f"  Generated {len(qa_pairs)} QA pairs")

@@ -200,7 +200,8 @@ using the `make convert-pdfs` command.
 Although it's doing a good job it's not free of errors, so for some files we need to manually review the generated text
 files in `data/txt/` directory and fix any issues. 
 
-Below are sample errors found in the generated text files:
+Below are sample errors found in the generated markdown files: in the top-right table is parsed incorrectly, resulting
+in a single column instead of two columns.
 
 ![sample doc](data/img/DE000A35JQF7_snippet.jpg)
 
@@ -233,9 +234,9 @@ Text:
 ```
 lots of QA pairs will be incomplete, meaning the questions are very specific to the information in the chunk
 but lack context to be useful for a RAG-based system. Sample questions of this type are:
-- What is the submission period for the securities as specified in the text? 
-- What is the ISIN code for the securities mentioned in the document?
-- What risks are associated with variable interest rate bonds according to the text?
+- What is the submission period for the securities as **specified in the text**? 
+- What is the ISIN code for the securities **mentioned in the document**?
+- What risks are associated with variable interest rate bonds **according to the text**?
 
 We can see that the above questions do make sense, but they are too specific to the chunk and do not provide enough context.
 
@@ -295,7 +296,7 @@ In order to configure the scoring/filtering step edit the `filtering` section in
 # Query filtering setting
 filtering:
   deduplicate_threshold: 0.7                # Whether to deduplicate questions
-  faithfulness_threshold: 0.8               # Minimum faithfulness threshold for question-answer pairs
+  faithfulness_threshold: 0.6               # Minimum faithfulness threshold for question-answer pairs
   answer_relevancy_threshold: 0.7           # Minimum relevancy threshold for answers
   context_precision_threshold: 0.6          # Minimum precision threshold for context relevance
 ```
@@ -305,114 +306,49 @@ First of all, we use semantic deduplication to remove similar questions. To this
 If the cosine similarity between two questions is above the `deduplicate_threshold` (default 0.7), we keep only one of them.
 
 After the semantic deduplication step, we score the question-answer pairs based on the following quality metrics:
-- **Faithfulness**: Measures if the answer is supported by the text. The generated answer is regarded as faithful if all the claims made in the answer can be inferred from the given context. LLM is used to extract the claims from the answer and then check if they can be found in the context.
-- **Answer Relevancy**: Measures if the answer is relevant to the question. A lower score is assigned to answers that are incomplete or contain redundant information and higher scores indicate better relevancy. The Answer Relevancy is defined as the mean cosine similarity of the original question to a number of artifical questions, which where generated (reverse engineered) by the LLM based on the answer.
-- **Context Precision**: Context Precision is a metric that evaluates for a given question whether all of the relevant items (i.e. our answer) are ranked higher than other answers (randomly selected from the extracted QA pairs). This is an indicator that the question is very specific and the answer can be easily distinguished from other answers.
+- **Faithfulness**: Measures if the answer is supported by the text. The generated answer is regarded as faithful if all the claims made in the answer can be inferred from the given context. LLM is used to extract the claims from the answer and then check if they can be found in the context. IMPORTANT: if the document summary was included in the QA generation prompt, the context used for the faithfulness check will also include the summary. This is done to ensure that the answer is faithful to the overall document context, not just the chunk text.
+- **Answer Relevancy**: Measures if the answer is relevant to the question. A lower score is assigned to answers that are incomplete or contain redundant information and higher scores indicate better relevancy. The Answer Relevancy is defined as the mean cosine similarity of the original question to a number of questions, which where generated (reverse engineered) by the LLM based on the answer.
+- **Context Precision**: Context Precision is a metric that evaluates for a given question whether all the relevant items (i.e. our answer) are ranked higher than other answers (randomly selected from the extracted QA pairs). This is an indicator that the question is very specific and the answer can be easily distinguished from other answers.
 
 We give the thresholds for the quality metrics in the `configs/config.yaml` file, and the QA pairs that  meet the thresholds are saved in the `data/generated/filtered` directory.
-The QA paris that do not meet the thresholds are saved in the `data/generated/rejected` directory.
+The QA paris that do not are below the thresholds are saved in the `data/generated/rejected` directory.
 
 Below we show the distribution of the Faithfulness and Answer Relevancy for the QA extracted from our sample documents:
 ![QA quality metrics](data/img/distribution_of_qa_metrics.png)
 
-We can see that although most of the QA paris have high Answer Relevancy, around 65% of the pairs have low (near zero) Faithfulness score, which means that the answers are not supported by the text.
+We can see that although most of the QA paris have almost perfect Faithfulness, i.e. the answers are supported by the context.
+Similarly, most of the QA pairs have Answer Relevancy score above 0.8, meaning that the answers are relevant to the questions.
 
-Let's examine some examples of the QA pairs that have low Faithfulness score:
-
-```
-Question: What type of financial instrument is being issued by Deutsche Pfandbriefbank AG, and what is the initial issuance price?
-Answer: The financial instrument being issued is EUR 259,500,000 Zero Coupon Notes, and the initial issuance price is 38.53205573%.
-```
-Here, without looking at the context, we can see that model incorrectly takes percentage as the initial issuance price, which is not correct.
+Let's examine some examples of the QA pairs generated from the sample documents:
 
 ```
-Question: What is the maturity date of the EUR 259,500,000 Zero Coupon Notes issued by Deutsche Pfandbriefbank AG?
-Answer: The maturity date is 8 August 2046.
-
-Context:
-
-## INTEREST (§ 3)
-ZINSEN (§ 3)
-- □ Fixed Rate Notes (other than Zero Coupon Notes)
-Festverzinsliche Schuldverschreibungen (außer Nullkupon-Schuldverschreibungen)
--  Zero Coupon Notes
-Nullkupon-Schuldverschreibungen
-Accrual of Interest
-Auflaufende Zinsen
-Amortisation Yield
-3.23 per cent per annum 3.23 % p.a.
-Emissionsrendite
-## Day Count Fraction
-Zinstagequotient
-□ Actual/Actual (ISDA)
-□ Actual/Actual (ICMA)
-□ Actual/365 (Fixed)
-□ Actual/360
- 30/360 or 360/360 or Bond Basis
-□ 30E/360 or Eurobond Basis
-## REDEMPTION (§ 5) RÜCKZAHLUNG (§ 5)
-Redemption at Maturity
-Rückzahlung bei Endfälligkeit
-Maturity Date
-8 August 2046
+"question": "What is the issue amount for the bonds issued by Erste Group Bank AG under its Debt Issuance Programme?",
+"answer": "The issue amount for the bonds is up to EUR 50,000,000.",
 ```
 
-Here the answer is correct and supported by the context, the LLM-based Faithfulness metric failed to capture that.
-We can see that those metrics have to be taken with a grain of salt, as they are not perfect and can fail to capture correctly formulated QA pairs.
 
 ```
-Question: What is the ISIN Code for the Zero Coupon Notes issued by Deutsche Pfandbriefbank AG?
-Answer: The ISIN Code for the Zero Coupon Notes is DE000A2AAVQ6.
-
-Context:
-
-Issuing Agent/specified office
-Paying Agent(s)/specified office(s) Zahlstelle(n)/bezeichnete Geschäftsstelle(n)
-## TAXATION (§ 7) STEUERN (§ 7)
--  Compensation for withholding tax Ausgleich für Quellensteuern
-- □ No compensation for withholding tax Kein Ausgleich für Quellensteuern
-## RESOLUTIONS OF THE HOLDERS (§ 11) BESCHLÜSSE DER GLÄUBIGER (§ 11)
-Applicable Anwendbar
-NOTICES (§12) MITTEILUNGEN (§12)
-Place and medium of publication Ort und Medium der Bekanntmachung
--  Germany (federal gazette) Deutschland (Bundesanzeiger)
-- □ Website of the stock exchange
--  Website of the Issuer Internetseite der Emittentin
-Deutsche Pfandbriefbank AG Freisinger Straße 5 85716 Unterschleissheim Germany
-Deutsche Pfandbriefbank AG Freisinger Straße 5 85716 Unterschleissheim Germany
-No
-Nein www.pfandbriefbank.com
-## GOVERNING LAW (§ 13) ANWENDBARES RECHT (§13 )
-Governing Law Anwendbares Recht
-LANGUAGE (§ 14) SPRACHE (§ 14)
-Language of Conditions Sprache der Bedingungen
-□ German only ausschließlich Deutsch
-
-English only ausschließlich Englisch
-□ English and German (English controlling)
-Englisch und Deutsch (englischer Text maßgeblich)
--  German and English (German controlling) Deutsch und Englisch (deutscher Text maßgeblich) ]
-German Law Deutsches Recht
-## PART II - OTHER INFORMATION
-## 1. Essential information
-Interest of natural and legal persons, including conflict of interests, involved in the issue/offer
--  Save as discussed in the Base Prospectus in Section XII. 'Subscription and Sale', so far as the Issuer is aware, no person involved in the offer of the Notes has a material interest in the offer.
-- □ Other interest
-- 2. Information concerning the Notes (others than those related to specific articles of terms and conditions)
-## Securities Identification Numbers
-Common Code
-ISIN Code
-DE000A2AAVQ6
-German Securities Code
-A2AAVQ
+"question": "What is the interest rate for the bonds issued by Erste Group Bank AG?",
+"answer": "The interest rate is 1.40% per annum.",
 ```
 
-Again the answer is correct and supported by the context, but the LLM-based Faithfulness metric failed to capture that.
+However, we can also see a lot of QA pairs which are very similar to the 2nd example and have not been captured by our semantic deduplication step, e.g.
+```
+"question": "What is the interest rate for the bonds issued by Erste Group Bank AG under its Debt Issuance Programme?",
+"answer": "The interest rate is 1.40% per annum."
+```
 
-To conclude, the quality metrics are not perfect and can fail to capture correctly formulated QA pairs. It is recommended to manually review the QA pairs in the `data/generated/recjected` to recover the false negatives.
+```
+"question": "What is the interest rate of the bonds issued by Erste Group Bank AG under its EUR 30 billion Debt Issuance Programme?",
+"answer": "The interest rate is 1.40% per annum."
+```
+
+We can either increase the `deduplicate_threshold` in the `configs/config.yaml` file to filter out more similar questions, or we can manually review the QA pairs in the last verification step performed by a human annotator in Label Studio.
+
+To conclude, the quality metrics are good proxies for the QA pairs quality. For the best quality it is recommended to manually review the QA pairs in the last step of the workflow.
 
 ### Verify the QA pairs in Label Studio.
-Since the automatic scoring / filtering step is not perfect, we can use human review to verify the QA pairs.
+In order to ensure the high quality of the extracted QA pairs, we can use human review via Label Studio.
 To do this, we can use the `make export-labelstudio` + `make start-labelstudio` commands to export the QA pairs for review and start the Label Studio server.
 
 Here's the example of the Label Studio interface for reviewing the QA pairs:
@@ -424,6 +360,7 @@ Here we simplify the task and ask the user only two questions:
 2. Is the question relevant to and well-formed? YES/NO
 
 After the review is done we can export the results and save the final QA pairs using `make process-reviews` command.
+This will save only the QA pairs that have been marked as "yes" for both questions in the `data/labelstudio/verified_results` directory.
 
 ## License
 

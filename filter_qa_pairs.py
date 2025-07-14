@@ -44,7 +44,7 @@ def deduplicate_questions(qa_pairs, threshold):
 
 
 def main():
-    input_dir = Path(config['filtering']['input_dir'])
+    input_dir = Path(config['filtering'].get('input_dir', 'data/generated'))
     dedup_dir = input_dir / "deduplicated"
     filtered_dir = input_dir / "filtered"
     rejected_dir = input_dir / "rejected"
@@ -109,9 +109,10 @@ def main():
             qa_pairs_with_metrics.append(qa_pair)
 
             if should_keep:
+                print(f"Accepted pair: {qa_pair['question']} -> {qa_pair['answer']}. Metrics: {metrics}")
                 filtered_pairs.append(qa_pair)
             else:
-                print(f"Rejected pair: {qa_pair['question']} -> {qa_pair['answer']}")
+                print(f"Rejected pair: {qa_pair['question']} -> {qa_pair['answer']}. Metrics: {metrics}")
                 rejected_pairs.append(qa_pair)
 
         output_file = filtered_dir / input_file.name
